@@ -11,7 +11,7 @@ def get_token():
     token = g.current_user.get_token()
     # 提交到数据库
     db.session.commit()
-    # 将令牌json化
+    # 将令牌json化`
     return jsonify({'token': token})
 
 
