@@ -33,9 +33,9 @@
 </template>
 
 <script>
+  import axios from 'axios'
   import Alert from './Alert'
   import store from '../store.js'
-  import axios from 'axios'
 
   export default {
     name: 'Login', //this is the name of component
@@ -59,19 +59,19 @@
     },
     methods: {
       onSubmit (e) {
-        this.loginForm.submitted = true // 先更新状态
+        this.loginForm.submitted = true  // 先更新状态
         this.loginForm.errors = 0
 
-        if (!this.lgoinForm.username){
+        if (!this.loginForm.username){
           this.loginForm.errors++
           this.loginForm.usernameError = 'Username required.'
         } else {
           this.loginForm.usernameError = null
         }
 
-        if (!this.loginForm.username) {
+        if (!this.loginForm.password) {
           this.loginForm.errors++
-          this.loginForm.usernameError = 'Username required.'
+          this.loginForm.passwordError = 'Password required.'
         } else {
           this.loginForm.passwordError = null
         }
