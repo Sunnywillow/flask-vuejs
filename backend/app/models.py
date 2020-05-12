@@ -1,9 +1,9 @@
-import base64
 from datetime import datetime, timedelta
-import os
+from hashlib import md5
+import jwt
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask import url_for, current_app
 from app import db
-from flask import url_for
 
 
 class PaginatedAPIMixin(object):
@@ -35,9 +35,11 @@ class User(PaginatedAPIMixin, db.Model):
     username = db.Column(db.String(64), index=True, unique=True)
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(128))  # 不保存原始密码
-    # 增加token和token过期时间的属性
-    token = db.Column(db.String(32), index=True, unique=True)
-    token_expiration = db.Column(db.DateTime)
+    name = db.Column(db.String(64))
+    location = db.Column(db.String(64))
+    about_me = db.Column(db.Text())
+    member_since = db.Column(db.DateTime(), default=datetime.utcnow)
+    last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -48,56 +50,60 @@ class User(PaginatedAPIMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-    def to_dict(self, include_email=False):  # 用户对象转换为JSON对象
+    def avatar(self, size):
+        '''头像'''
+        digest = md5(self.email.lower().encode('utf-8')).hexdigest()
+        return 'https://www.gravatar.com/avatar/{}?d=identicon&s={}'.format(digest, size)
+
+    def to_dict(self, include_email=False):
         data = {
             'id': self.id,
             'username': self.username,
+            'name': self.name,
+            'location': self.location,
+            'about_me': self.about_me,
+            'member_since': self.member_since.isoformat() + 'Z',
+            'last_seen': self.last_seen.isoformat() + 'Z',
             '_links': {
-                'self': url_for('api.get_user', id=self.id)
+                'self': url_for('api.get_user', id=self.id),
+                'avatar': self.avatar(128)
             }
         }
         if include_email:
             data['email'] = self.email
         return data
 
-    def from_dict(self, data, new_user=False):  # JSON对象转化为User对象
-        for field in ['username', 'email']:
+    def from_dict(self, data, new_user=False):
+        for field in ['username', 'email', 'name', 'location', 'about_me']:
             if field in data:
-                setattr(self, field, data[field])  # setattr设置实例的field属性,值为data[field]
+                setattr(self, field, data[field])
         if new_user and 'password' in data:
             self.set_password(data['password'])
 
-    def get_token(self, expires_in=3600):
-        # now当前时间
-        now = datetime.utcnow()
-        # 如果令牌存在且令牌国企时间大于now+60s
-        if self.token and self.token_expiration > now + timedelta(seconds=60):
-            # 调用self.token方法
-            return self.token
-        # 定义token方法 利用urandom生成随机散列值然后进行b64编码，最后解码为utf-8格式
-        self.token = base64.b64encode(os.urandom(24)).decode('utf-8')
-        self.token_expiration = now + timedelta(seconds=expires_in)
-        # 更新user实例
+    def ping(self):
+        self.last_seen = datetime.utcnow()
         db.session.add(self)
-        return self.token
 
-    # token过期时间初始化
-    def revoke_token(self):
-        # 重新定义token过期时间
-        self.token_expiration = datetime.utcnow() - timedelta(seconds=1)
+    def get_jwt(self, expires_in=3600):
+        now = datetime.utcnow()
+        payload = {
+            'user_id': self.id,
+            'name': self.name if self.name else self.username,
+            'exp': now + timedelta(seconds=expires_in),
+            'iat': now
+        }
+        return jwt.encode(
+            payload,
+            current_app.config['SECRET_KEY'],
+            algorithm='HS256').decode('utf-8')
 
-    # 不需要user实例只需要token
     @staticmethod
-    def check_token(token):
-        # 首先过滤user
-        user = User.query.filter_by(token=token).first()
-        # 如果用户不存在或令牌过期
-        if user is None or user.token_expiration < datetime.utcnow():
+    def verify_jwt(token):
+        try:
+            payload = jwt.decode(
+                token,
+                current_app.config['SECRET_KEY'],
+                algorithms=['HS256'])
+        except jwt.exceptions.ExpiredSignatureError as e:
             return None
-        return user
-
-
-
-
-
-
+        return User.query.get(payload.get('user_id'))

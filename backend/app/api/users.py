@@ -1,5 +1,5 @@
 import re
-from flask import request, jsonify, url_for
+from flask import request, jsonify, url_for, g
 from app import db
 from app.api import bp
 from app.api.auth import token_auth
@@ -7,23 +7,17 @@ from app.api.errors import bad_request
 from app.models import User
 
 
-
 @bp.route('/users', methods=['POST'])
 def create_user():
     '''注册一个新用户'''
-    # 使用请求上下文全局变量 request 请求对象，封装了客户端发出的 HTTP 请求中的内容
     data = request.get_json()
     if not data:
         return bad_request('You must post JSON data.')
 
-    message = {}  # 设置一个空message 不满足的条件加入message 那么return bad_request
-    # 如果data数据中没有username属性或者没拿到
+    message = {}
     if 'username' not in data or not data.get('username', None):
-        # 报错
         message['username'] = 'Please provide a valid username.'
-    # 邮箱正则
     pattern = '^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$'
-    # 如果data数据中没有邮箱属性，或者不匹配正则
     if 'email' not in data or not re.match(pattern, data.get('email', None)):
         message['email'] = 'Please provide a valid email address.'
     if 'password' not in data or not data.get('password', None):
@@ -36,11 +30,11 @@ def create_user():
     if message:
         return bad_request(message)
 
-    user = User()  # 创建user实例
-    user.from_dict(data, new_user=True)  # 把前端的JSON对象转化为User对象
+    user = User()
+    user.from_dict(data, new_user=True)
     db.session.add(user)
     db.session.commit()
-    response = jsonify(user.to_dict())  # User对象转化为JSON对象，这样把信息反馈给前端
+    response = jsonify(user.to_dict())
     response.status_code = 201
     # HTTP协议要求201响应包含一个值为新资源URL的Location头部
     response.headers['Location'] = url_for('api.get_user', id=user.id)
@@ -50,8 +44,7 @@ def create_user():
 @bp.route('/users', methods=['GET'])
 @token_auth.login_required
 def get_users():
-    '''返回所有用户的集合'''
-    # 页数
+    '''返回用户集合，分页'''
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 10, type=int), 100)
     data = User.to_collection_dict(User.query, page, per_page, 'api.get_users')
@@ -62,6 +55,9 @@ def get_users():
 @token_auth.login_required
 def get_user(id):
     '''返回一个用户'''
+    user = User.query.get_or_404(id)
+    if g.current_user == user:
+        return jsonify(User.query.get_or_404(id).to_dict(include_email=True))
     return jsonify(User.query.get_or_404(id).to_dict())
 
 
@@ -75,19 +71,16 @@ def update_user(id):
         return bad_request('You must post JSON data.')
 
     message = {}
-    # 如果data中有username且没拿到新的username？
     if 'username' in data and not data.get('username', None):
         message['username'] = 'Please provide a valid username.'
 
     pattern = '^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$'
-    # 如果data中有email且get到的新email不匹配
     if 'email' in data and not re.match(pattern, data.get('email', None)):
         message['email'] = 'Please provide a valid email address.'
-    # 如果data中有username且data的username属性不等于得到的第一个username
+
     if 'username' in data and data['username'] != user.username and \
             User.query.filter_by(username=data['username']).first():
         message['username'] = 'Please use a different username.'
-    # data中有email且data的email属性不等于user中的email属性且user.email等于data中的email
     if 'email' in data and data['email'] != user.email and \
             User.query.filter_by(email=data['email']).first():
         message['email'] = 'Please use a different email address.'
@@ -95,7 +88,7 @@ def update_user(id):
     if message:
         return bad_request(message)
 
-    user.from_dict(data, new_user=True)
+    user.from_dict(data, new_user=False)
     db.session.commit()
     return jsonify(user.to_dict())
 
